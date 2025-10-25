@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import type { Message } from '../types';
-import { UserIcon, BotIcon, SendIcon, LoadingIcon } from './icons/Icons';
+import type { Message } from '../types.ts';
+import { UserIcon, BotIcon, SendIcon, LoadingIcon } from './icons/Icons.tsx';
 
 interface ChatBoxProps {
   messages: Message[];
