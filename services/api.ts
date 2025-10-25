@@ -1,4 +1,4 @@
-import type { Message } from '../types';
+import type { Message } from '../types.ts';
 
 const WORKER_URL = 'https://ginginv2.realganganadul.workers.dev';
 
