@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ChatBox } from './components/ChatBox';
-import { LoginModal } from './components/LoginModal';
-import type { Message } from './types';
-import { api } from './services/api';
+import { ChatBox } from './components/ChatBox.tsx';
+import { LoginModal } from './components/LoginModal.tsx';
+import type { Message } from './types.ts';
+import { api } from './services/api.ts';
 
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
