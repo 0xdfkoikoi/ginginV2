@@ -1,0 +1,5 @@
+{
+  "name": "AI Business Assistant Chat",
+  "description": "A beautiful glassmorphism chat application powered by the Gemini API to answer customer questions and assist with business tasks. Features a secure admin login.",
+  "requestFramePermissions": []
+}
