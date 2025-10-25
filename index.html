@@ -5,29 +5,370 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Business Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.27.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.4.2",
-    "hono/": "https://aistudiocdn.com/hono@^4.10.2/",
-    "hono": "https://aistudiocdn.com/hono@^4.10.2"
+    "hono/": "https://aistudiocdn.com/hono@^4.10.3/",
+    "hono": "https://aistudiocdn.com/hono@^4.10.3"
   }
 }
 </script>
-<!-- Add Babel Standalone for in-browser transpilation of TSX -->
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-</head>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </head>
   <body class="bg-gray-900">
     <div id="root"></div>
-    <!-- 
-      Change script type to "text/babel" to enable Babel transpilation.
-      Add data-type="module" to support ES modules (import/export).
-      Add data-presets="react,typescript" to handle JSX and TypeScript syntax.
-    -->
-    <script type="text/babel" data-presets="react,typescript" data-type="module" src="index.tsx"></script>
+    <script type="text/babel" data-type="module">
+      import React, { useState, useEffect, useCallback, useRef } from 'react';
+      import ReactDOM from 'react-dom/client';
+
+      // ======================================================================
+      // Inlined File: components/icons/Icons.tsx
+      // ======================================================================
+      const UserIcon = () => (
+        <div className="w-10 h-10 rounded-full bg-indigo-500 flex-shrink-0 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        </div>
+      );
+
+      const BotIcon = () => (
+        <div className="w-10 h-10 rounded-full bg-gray-600 flex-shrink-0 flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+          </svg>
+        </div>
+      );
+
+      const SendIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+        </svg>
+      );
+
+      const LoadingIcon = () => (
+        <div className="flex items-center space-x-2">
+          <div className="w-2 h-2 rounded-full bg-gray-400 animate-pulse [animation-delay:-0.3s]"></div>
+          <div className="w-2 h-2 rounded-full bg-gray-400 animate-pulse [animation-delay:-0.15s]"></div>
+          <div className="w-2 h-2 rounded-full bg-gray-400 animate-pulse"></div>
+        </div>
+      );
+
+      // ======================================================================
+      // Inlined File: services/api.ts
+      // ======================================================================
+      const WORKER_URL = 'https://ginginv2.realganganadul.workers.dev';
+
+      const api = {
+        login: async (username, password) => {
+          const response = await fetch(`${WORKER_URL}/api/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+            credentials: 'include',
+          });
+          return response.ok;
+        },
+
+        logout: async () => {
+          await fetch(`${WORKER_URL}/api/logout`, {
+            method: 'POST',
+            credentials: 'include',
+          });
+        },
+
+        checkSession: async () => {
+          try {
+            const response = await fetch(`${WORKER_URL}/api/session`, {
+              credentials: 'include',
+            });
+            if (!response.ok) return { isLoggedIn: false };
+            return response.json();
+          } catch (error) {
+            console.error("Failed to check session:", error);
+            return { isLoggedIn: false };
+          }
+        },
+
+        getChatResponse: async (history, newUserMessage) => {
+          try {
+            const response = await fetch(`${WORKER_URL}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ history, newUserMessage }),
+              credentials: 'include',
+            });
+
+            if (!response.ok) {
+              throw new Error(`API error: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            return data.text;
+          } catch (error) {
+            console.error("Failed to get chat response:", error);
+            return "I'm sorry, but I encountered an error while processing your request. Please try again.";
+          }
+        },
+      };
+
+      // ======================================================================
+      // Inlined File: components/LoginModal.tsx
+      // ======================================================================
+      const LoginModal = ({ onLogin, onClose }) => {
+        const [username, setUsername] = useState('');
+        const [password, setPassword] = useState('');
+        const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+        const handleSubmit = async (e) => {
+          e.preventDefault();
+          setIsLoggingIn(true);
+          await onLogin(username, password);
+          setIsLoggingIn(false);
+        };
+
+        return (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+            <div className="w-full max-w-sm bg-gray-800/50 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-2xl p-8" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-2xl font-bold text-center text-white mb-6">Admin Login</h2>
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Username</label>
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-gray-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
+                    required
+                    disabled={isLoggingIn}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Password</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-gray-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
+                    required
+                    disabled={isLoggingIn}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg hover:bg-indigo-500 transition-colors duration-300 disabled:bg-indigo-800 disabled:cursor-not-allowed"
+                  disabled={isLoggingIn}
+                >
+                  {isLoggingIn ? 'Logging In...' : 'Log In'}
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      };
+
+      // ======================================================================
+      // Inlined File: components/ChatBox.tsx
+      // ======================================================================
+      const ChatBox = ({ messages, onSendMessage, isLoading }) => {
+        const [inputText, setInputText] = useState('');
+        const messagesEndRef = useRef(null);
+
+        const scrollToBottom = () => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        };
+
+        useEffect(scrollToBottom, [messages]);
+
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          if (!inputText.trim()) return;
+          onSendMessage(inputText);
+          setInputText('');
+        };
+
+        return (
+          <div className="w-full max-w-2xl h-[80vh] flex flex-col bg-black/30 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+              {messages.map((msg, index) => (
+                <div key={index} className={`flex items-start gap-4 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                  {msg.role === 'model' && <BotIcon />}
+                  <div className={`px-5 py-3 rounded-2xl max-w-md ${msg.role === 'user' ? 'bg-indigo-500/80 rounded-br-none' : 'bg-gray-700/60 rounded-bl-none'}`}>
+                    <p className="text-white/90 whitespace-pre-wrap">{msg.text}</p>
+                  </div>
+                  {msg.role === 'user' && <UserIcon />}
+                </div>
+              ))}
+              {isLoading && (
+                <div className="flex items-start gap-4">
+                  <BotIcon />
+                  <div className="px-5 py-3 rounded-2xl bg-gray-700/60 rounded-bl-none">
+                    <LoadingIcon />
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+            <form onSubmit={handleSubmit} className="p-4 border-t border-white/10 bg-black/20">
+              <div className="relative">
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit(e);
+                    }
+                  }}
+                  placeholder="Ask me anything..."
+                  className="w-full bg-gray-800/50 border border-white/10 rounded-lg py-3 pr-14 pl-4 text-white placeholder-gray-400 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none transition-all duration-300"
+                  rows={1}
+                  style={{ minHeight: '52px', maxHeight: '200px' }}
+                  onInput={(e) => {
+                      const target = e.target;
+                      target.style.height = 'auto';
+                      target.style.height = `${target.scrollHeight}px`;
+                  }}
+                />
+                <button type="submit" className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 transition-colors duration-300" disabled={isLoading || !inputText.trim()}>
+                  <SendIcon />
+                </button>
+              </div>
+            </form>
+          </div>
+        );
+      };
+
+      // ======================================================================
+      // Inlined File: App.tsx
+      // ======================================================================
+      const App = () => {
+        const [messages, setMessages] = useState([
+          {
+            role: 'model',
+            text: "Hello! I am your AI Business Assistant. How can I help you today?",
+          },
+        ]);
+        const [isLoading, setIsLoading] = useState(false);
+        const [showLoginModal, setShowLoginModal] = useState(false);
+        const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+        useEffect(() => {
+          const verifySession = async () => {
+            const { isLoggedIn } = await api.checkSession();
+            setIsLoggedIn(isLoggedIn);
+          };
+          verifySession();
+        }, []);
+        
+        const handleSendMessage = async (text) => {
+          if (!text.trim()) return;
+
+          const userMessage = { role: 'user', text };
+          setMessages(prev => [...prev, userMessage]);
+          setIsLoading(true);
+
+          try {
+            const history = messages.slice(1); // Exclude initial welcome message
+            const responseText = await api.getChatResponse(history, userMessage);
+            const modelMessage = { role: 'model', text: responseText };
+            setMessages(prev => [...prev, modelMessage]);
+          } catch (error) {
+            console.error("Failed to get response from worker:", error);
+            const errorMessage = {
+              role: 'model',
+              text: "Sorry, I'm having trouble connecting to my brain right now. Please try again later.",
+            };
+            setMessages(prev => [...prev, errorMessage]);
+          } finally {
+            setIsLoading(false);
+          }
+        };
+
+        const handleLogin = useCallback(async (username, password) => {
+          const success = await api.login(username, password);
+          if (success) {
+            setIsLoggedIn(true);
+            setShowLoginModal(false);
+            const loginSuccessMessage = {
+              role: 'model',
+              text: "Admin login successful. You can now ask me to perform office tasks or generate reports.",
+            };
+            setMessages(prev => [...prev, loginSuccessMessage]);
+          } else {
+            alert('Invalid credentials!');
+          }
+        }, []);
+
+        const handleLogout = async () => {
+          await api.logout();
+          setIsLoggedIn(false);
+          const logoutMessage = {
+            role: 'model',
+            text: "You have been logged out.",
+          };
+          setMessages(prev => [...prev, logoutMessage]);
+        };
+
+        return (
+          <div className="relative min-h-screen w-full bg-gradient-to-br from-gray-900 via-slate-800 to-indigo-900 text-white font-sans overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-full bg-cover bg-center" style={{backgroundImage: "url('https://picsum.photos/1920/1080?grayscale&blur=2')"}}></div>
+            <div className="absolute top-0 left-0 w-full h-full bg-black/50"></div>
+            
+            <header className="absolute top-0 left-0 w-full p-4 sm:p-6 flex justify-between items-center z-20">
+              <h1 className="text-xl sm:text-2xl font-bold text-white/90 tracking-wider">AI Business Assistant</h1>
+              {isLoggedIn ? (
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 bg-red-500/50 text-white font-semibold rounded-lg border border-red-400/60 backdrop-blur-sm hover:bg-red-500/70 transition-colors duration-300"
+                >
+                  Logout
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowLoginModal(true)}
+                  className="px-4 py-2 bg-white/10 text-white font-semibold rounded-lg border border-white/20 backdrop-blur-sm hover:bg-white/20 transition-colors duration-300"
+                >
+                  Admin Login
+                </button>
+              )}
+            </header>
+
+            <main className="relative flex items-center justify-center min-h-screen p-4">
+              <ChatBox
+                messages={messages}
+                onSendMessage={handleSendMessage}
+                isLoading={isLoading}
+              />
+            </main>
+
+            {showLoginModal && (
+              <LoginModal onLogin={handleLogin} onClose={() => setShowLoginModal(false)} />
+            )}
+          </div>
+        );
+      };
+      
+      // ======================================================================
+      // Inlined File: index.tsx (Entry Point)
+      // ======================================================================
+      const rootElement = document.getElementById('root');
+      if (!rootElement) {
+        throw new Error("Could not find root element to mount to");
+      }
+
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(
+        <React.StrictMode>
+          <App />
+        </React.StrictMode>
+      );
+    </script>
   </body>
 </html>
