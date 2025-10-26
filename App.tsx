@@ -34,14 +34,14 @@ const App: React.FC = () => {
         text: aiResponseText,
         sender: 'ai',
       };
-      setMessages(prevMessages => [...prevMessages, userMessage, aiMessage]);
+      setMessages(prevMessages => [...prevMessages, aiMessage]);
     } catch (error) {
       const errorMessage: Message = {
         id: Date.now() + 1,
         text: "Sorry, something went wrong. Please try again.",
         sender: 'ai',
       };
-      setMessages(prevMessages => [...prevMessages, userMessage, errorMessage]);
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
     } finally {
       setIsLoading(false);
     }
