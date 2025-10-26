@@ -9,10 +9,10 @@
 {
   "imports": {
     "react": "https://esm.sh/react@18.3.1",
+    "react/": "https://esm.sh/react@18.3.1/",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.27.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
     "google-auth-library": "https://aistudiocdn.com/google-auth-library@^10.4.2",
     "hono/": "https://aistudiocdn.com/hono@^4.10.3/",
     "hono": "https://aistudiocdn.com/hono@^4.10.3"
@@ -67,20 +67,31 @@
 
       const api = {
         login: async (username, password) => {
-          const response = await fetch(`${WORKER_URL}/api/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-            credentials: 'include',
-          });
-          return response.ok;
+          try {
+            const response = await fetch(`${WORKER_URL}/api/login`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username, password }),
+              credentials: 'include',
+            });
+            if (response.ok) return { success: true };
+            const errorData = await response.json().catch(() => ({ error: 'Login failed due to a network or server issue.' }));
+            return { success: false, error: errorData.error || 'Invalid credentials or unknown error.' };
+          } catch (error) {
+            console.error("Login API call failed:", error);
+            return { success: false, error: 'Could not connect to the server.' };
+          }
         },
 
         logout: async () => {
-          await fetch(`${WORKER_URL}/api/logout`, {
-            method: 'POST',
-            credentials: 'include',
-          });
+          try {
+            await fetch(`${WORKER_URL}/api/logout`, {
+              method: 'POST',
+              credentials: 'include',
+            });
+          } catch (error) {
+            console.error("Logout API call failed:", error);
+          }
         },
 
         checkSession: async () => {
@@ -105,15 +116,18 @@
               credentials: 'include',
             });
 
-            if (!response.ok) {
-              throw new Error(`API error: ${response.statusText}`);
-            }
-
             const data = await response.json();
+            
+            if (!response.ok) {
+              // Use the error message from the backend if available
+              throw new Error(data.text || `API error: ${response.statusText}`);
+            }
+            
             return data.text;
           } catch (error) {
             console.error("Failed to get chat response:", error);
-            return "I'm sorry, but I encountered an error while processing your request. Please try again.";
+            // Re-throw the error with a clear message, whether from the backend or a network issue
+            throw new Error(error.message || "I'm sorry, but I encountered an error while processing your request. Please try again.");
           }
         },
       };
@@ -283,7 +297,7 @@
             console.error("Failed to get response from worker:", error);
             const errorMessage = {
               role: 'model',
-              text: "Sorry, I'm having trouble connecting to my brain right now. Please try again later.",
+              text: error.message || "Sorry, I'm having trouble connecting to my brain right now. Please try again later.",
             };
             setMessages(prev => [...prev, errorMessage]);
           } finally {
@@ -292,8 +306,8 @@
         };
 
         const handleLogin = useCallback(async (username, password) => {
-          const success = await api.login(username, password);
-          if (success) {
+          const result = await api.login(username, password);
+          if (result.success) {
             setIsLoggedIn(true);
             setShowLoginModal(false);
             const loginSuccessMessage = {
@@ -302,7 +316,7 @@
             };
             setMessages(prev => [...prev, loginSuccessMessage]);
           } else {
-            alert('Invalid credentials!');
+            alert(result.error);
           }
         }, []);
 
