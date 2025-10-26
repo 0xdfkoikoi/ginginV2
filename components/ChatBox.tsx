@@ -1,78 +1,99 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import type { Message } from '../types.ts';
-import { UserIcon, BotIcon, SendIcon, LoadingIcon } from './icons/Icons.tsx';
+import { Message } from '../types';
+import { BotIcon } from './icons/BotIcon';
+import { UserIcon } from './icons/UserIcon';
+import { SendIcon } from './icons/SendIcon';
 
 interface ChatBoxProps {
   messages: Message[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (message: string) => void;
   isLoading: boolean;
 }
 
 export const ChatBox: React.FC<ChatBoxProps> = ({ messages, onSendMessage, isLoading }) => {
-  const [inputText, setInputText] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [inputValue, setInputValue] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(scrollToBottom, [messages]);
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isLoading]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSendMessage(inputText);
-    setInputText('');
+    if (inputValue.trim() && !isLoading) {
+      onSendMessage(inputValue);
+      setInputValue('');
+    }
   };
 
-  return (
-    <div className="w-full max-w-2xl h-[80vh] flex flex-col bg-black/30 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-      <div className="flex-1 p-6 overflow-y-auto space-y-6">
-        {messages.map((msg, index) => (
-          <div key={index} className={`flex items-start gap-4 ${msg.role === 'user' ? 'justify-end' : ''}`}>
-            {msg.role === 'model' && <BotIcon />}
-            <div className={`px-5 py-3 rounded-2xl max-w-md ${msg.role === 'user' ? 'bg-indigo-500/80 rounded-br-none' : 'bg-gray-700/60 rounded-bl-none'}`}>
-              <p className="text-white/90 whitespace-pre-wrap">{msg.text}</p>
-            </div>
-            {msg.role === 'user' && <UserIcon />}
-          </div>
-        ))}
-        {isLoading && (
-          <div className="flex items-start gap-4">
-            <BotIcon />
-            <div className="px-5 py-3 rounded-2xl bg-gray-700/60 rounded-bl-none">
-              <LoadingIcon />
-            </div>
+  const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
+    const isUser = message.sender === 'user';
+    return (
+      <div className={`flex items-start gap-3 my-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
+        {!isUser && (
+          <div className="flex-shrink-0 h-8 w-8 rounded-full bg-amber-800/50 flex items-center justify-center">
+            <BotIcon className="h-5 w-5 text-white"/>
           </div>
         )}
+        <div 
+          className={`max-w-xs md:max-w-md lg:max-w-lg px-4 py-3 rounded-2xl text-stone-100/90 ${isUser ? 'bg-[#856d5b]/60 rounded-br-none' : 'bg-stone-500/20 rounded-bl-none'}`}
+        >
+          <p className="text-sm leading-relaxed">{message.text}</p>
+        </div>
+        {isUser && (
+          <div className="flex-shrink-0 h-8 w-8 rounded-full bg-stone-600/50 flex items-center justify-center">
+            <UserIcon className="h-5 w-5 text-white"/>
+          </div>
+        )}
+      </div>
+    );
+  };
+  
+  const TypingIndicator: React.FC = () => (
+    <div className="flex items-start gap-3 my-4 justify-start">
+        <div className="flex-shrink-0 h-8 w-8 rounded-full bg-amber-800/50 flex items-center justify-center">
+            <BotIcon className="h-5 w-5 text-white"/>
+        </div>
+        <div className="max-w-xs px-4 py-3 rounded-2xl bg-stone-500/20 rounded-bl-none flex items-center space-x-1">
+          <span className="h-2 w-2 bg-white/50 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+          <span className="h-2 w-2 bg-white/50 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+          <span className="h-2 w-2 bg-white/50 rounded-full animate-bounce"></span>
+        </div>
+    </div>
+  );
+
+  return (
+    <div className="w-full max-w-2xl h-[80vh] flex flex-col bg-[#4a3f35]/30 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="flex-1 p-6 overflow-y-auto">
+        {messages.map((msg) => (
+          <MessageBubble key={msg.id} message={msg} />
+        ))}
+        {isLoading && <TypingIndicator />}
         <div ref={messagesEndRef} />
       </div>
-      <form onSubmit={handleSubmit} className="p-4 border-t border-white/10 bg-black/20">
-        <div className="relative">
-          <textarea
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
-            placeholder="Ask me anything..."
-            className="w-full bg-gray-800/50 border border-white/10 rounded-lg py-3 pr-14 pl-4 text-white placeholder-gray-400 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none transition-all duration-300"
-            rows={1}
-            style={{ minHeight: '52px', maxHeight: '200px' }}
-            onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                target.style.height = 'auto';
-                target.style.height = `${target.scrollHeight}px`;
-            }}
+      <div className="p-4 border-t border-white/10">
+        <form onSubmit={handleSubmit} className="flex items-center gap-3">
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            placeholder="Ask Mantik AI about our coffee..."
+            className="flex-1 bg-white/10 placeholder-white/40 text-white px-4 py-2 rounded-lg border border-transparent focus:outline-none focus:ring-2 focus:ring-[#856d5b] focus:border-transparent transition-all"
+            disabled={isLoading}
           />
-          <button type="submit" className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 transition-colors duration-300" disabled={isLoading || !inputText.trim()}>
-            <SendIcon />
+          <button
+            type="submit"
+            disabled={isLoading || !inputValue.trim()}
+            className="w-10 h-10 flex items-center justify-center bg-[#856d5b] rounded-lg text-white disabled:bg-[#856d5b]/50 disabled:cursor-not-allowed hover:bg-[#7a6352] transition-colors"
+          >
+            <SendIcon className="w-5 h-5" />
           </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 };
