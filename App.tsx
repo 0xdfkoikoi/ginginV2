@@ -39,7 +39,7 @@ const App: React.FC = () => {
       console.error("Failed to get response from worker:", error);
       const errorMessage: Message = {
         role: 'model',
-        text: "Sorry, I'm having trouble connecting to my brain right now. Please try again later.",
+        text: (error as Error).message || "Sorry, I'm having trouble connecting to my brain right now. Please try again later.",
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -48,8 +48,8 @@ const App: React.FC = () => {
   };
 
   const handleLogin = useCallback(async (username, password) => {
-    const success = await api.login(username, password);
-    if (success) {
+    const result = await api.login(username, password);
+    if (result.success) {
       setIsLoggedIn(true);
       setShowLoginModal(false);
       const loginSuccessMessage: Message = {
@@ -58,7 +58,7 @@ const App: React.FC = () => {
       };
       setMessages(prev => [...prev, loginSuccessMessage]);
     } else {
-      alert('Invalid credentials!');
+      alert(result.error);
     }
   }, []);
 
