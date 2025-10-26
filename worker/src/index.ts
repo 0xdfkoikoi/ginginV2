@@ -1,4 +1,6 @@
+
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { GoogleGenAI, FunctionDeclaration, Type, GenerateContentResponse, Chat, Part } from "@google/genai";
 import { GoogleAuth } from 'google-auth-library';
@@ -26,34 +28,29 @@ type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 
 // --- CORS Middleware ---
-// Replaced hono/cors with a manual implementation to fix fetch errors.
-app.use('/api/*', async (c, next) => {
-  // Handle preflight (OPTIONS) requests
-  if (c.req.method === 'OPTIONS') {
-    const origin = c.req.header('Origin');
-    const headers = new Headers();
-    // Dynamically set the allowed origin
-    if (origin) {
-      headers.set('Access-Control-Allow-Origin', origin);
+// Updated to be more flexible for deployment on different GitHub Pages URLs or Codespaces.
+app.use('/api/*', cors({
+  origin: (origin) => {
+    if (!origin) {
+      return undefined; // Block requests with no origin
     }
-    headers.set('Access-Control-Allow-Credentials', 'true');
-    headers.set('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', 'Content-Type');
-    headers.set('Access-Control-Max-Age', '86400'); // Cache preflight for 1 day
-    
-    return new Response(null, { status: 204, headers });
-  }
-
-  // Handle actual requests
-  await next();
-
-  // Add CORS headers to the response
-  const origin = c.req.header('Origin');
-  if (origin) {
-    c.header('Access-Control-Allow-Origin', origin);
-  }
-  c.header('Access-Control-Allow-Credentials', 'true');
-});
+    const hostname = new URL(origin).hostname;
+    // Allow common development and GitHub hosting platforms
+    if (
+      hostname.endsWith('.github.io') ||
+      hostname.endsWith('.github.dev') || // For Codespaces
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1'
+    ) {
+      return origin;
+    }
+    return undefined; // Deny all other origins
+  },
+  allowHeaders: ['Content-Type'],
+  allowMethods: ['POST', 'GET', 'OPTIONS'],
+  credentials: true,
+  maxAge: 86400,
+}));
 
 
 // --- Authentication Routes ---
@@ -108,16 +105,22 @@ app.post('/api/chat', async (c) => {
   try {
     const ai = new GoogleGenAI({ apiKey: c.env.GEMINI_API_KEY });
     const model = 'gemini-2.5-flash';
-    const systemInstruction = getSystemInstruction(isAdmin);
 
-    const tools = isAdmin ? [{ functionDeclarations: [createInvoiceTool, manageInventoryTool, sendTelegramReportTool] }] : undefined;
+    // Safely construct the config object
+    const config: {
+        systemInstruction: string;
+        tools?: { functionDeclarations: FunctionDeclaration[] }[];
+    } = {
+        systemInstruction: getSystemInstruction(isAdmin),
+    };
+
+    if (isAdmin) {
+        config.tools = [{ functionDeclarations: [createInvoiceTool, manageInventoryTool, sendTelegramReportTool] }];
+    }
 
     const chat: Chat = ai.chats.create({
         model,
-        config: {
-            systemInstruction,
-            tools,
-        },
+        config, // Use the safely constructed config
         history: history.map(msg => ({
             role: msg.role,
             parts: [{ text: msg.text }],
@@ -145,9 +148,6 @@ app.post('/api/chat', async (c) => {
             functionResult = { success: false, error: 'Unknown function' };
         }
 
-        // FIX: The `contents` property is not valid for `chat.sendMessage`.
-        // A tool response should be sent as a `Part` object within the `message` property.
-        // The SDK will infer the 'tool' role from the `functionResponse` part.
         const toolResponseParts: Part[] = [
           {
             functionResponse: {
