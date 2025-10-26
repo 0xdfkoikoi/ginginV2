@@ -1,5 +1,5 @@
 {
-  "name": "AI Business Assistant Chat",
-  "description": "A beautiful glassmorphism chat application powered by the Gemini API to answer customer questions and assist with business tasks. Features a secure admin login.",
+  "name": "Mantik AI",
+  "description": "A beautiful glassmorphism chat interface for Mantik AI, an assistant for a coffee export business.",
   "requestFramePermissions": []
 }
