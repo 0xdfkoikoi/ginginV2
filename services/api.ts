@@ -3,21 +3,32 @@ import type { Message } from '../types.ts';
 const WORKER_URL = 'https://ginginv2.realganganadul.workers.dev';
 
 export const api = {
-  login: async (username, password) => {
-    const response = await fetch(`${WORKER_URL}/api/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-      credentials: 'include',
-    });
-    return response.ok;
+  login: async (username, password): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const response = await fetch(`${WORKER_URL}/api/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        credentials: 'include',
+      });
+      if (response.ok) return { success: true };
+      const errorData = await response.json().catch(() => ({ error: 'Login failed due to a network or server issue.' }));
+      return { success: false, error: errorData.error || 'Invalid credentials or unknown error.' };
+    } catch (error) {
+      console.error("Login API call failed:", error);
+      return { success: false, error: 'Could not connect to the server.' };
+    }
   },
 
   logout: async () => {
-    await fetch(`${WORKER_URL}/api/logout`, {
-      method: 'POST',
-      credentials: 'include',
-    });
+    try {
+      await fetch(`${WORKER_URL}/api/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+    } catch (error) {
+        console.error("Logout API call failed:", error);
+    }
   },
 
   checkSession: async (): Promise<{ isLoggedIn: boolean }> => {
@@ -42,15 +53,14 @@ export const api = {
         credentials: 'include',
       });
 
-      if (!response.ok) {
-        throw new Error(`API error: ${response.statusText}`);
-      }
-
       const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.text || `API error: ${response.statusText}`);
+      }
       return data.text;
     } catch (error) {
       console.error("Failed to get chat response:", error);
-      return "I'm sorry, but I encountered an error while processing your request. Please try again.";
+      throw new Error((error as Error).message || "I'm sorry, but I encountered an error while processing your request. Please try again.");
     }
   },
 };
