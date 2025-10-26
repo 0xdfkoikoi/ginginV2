@@ -1,4 +1,3 @@
-
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
@@ -40,6 +39,7 @@ app.use('/api/*', cors({
       hostname.endsWith('.github.io') ||
       hostname.endsWith('.github.dev') || // For Codespaces
       hostname === 'localhost' ||
+      hostname.endsWith('.localhost') || // Handle Vite dev server
       hostname === '127.0.0.1'
     ) {
       return origin;
@@ -56,6 +56,11 @@ app.use('/api/*', cors({
 // --- Authentication Routes ---
 
 app.post('/api/login', async (c) => {
+  if (!c.env.ADMIN_USERNAME || !c.env.ADMIN_PASSWORD || !c.env.SESSION_KV) {
+    console.error('Server not configured: Missing ADMIN_USERNAME, ADMIN_PASSWORD, or SESSION_KV binding.');
+    return c.json({ success: false, error: 'Server is not configured correctly. Please contact the administrator.' }, 503);
+  }
+
   const { username, password } = await c.req.json();
 
   if (username === c.env.ADMIN_USERNAME && password === c.env.ADMIN_PASSWORD) {
@@ -70,19 +75,27 @@ app.post('/api/login', async (c) => {
     });
     return c.json({ success: true });
   }
-  return c.json({ success: false }, 401);
+  return c.json({ success: false, error: 'Invalid username or password.' }, 401);
 });
 
 app.post('/api/logout', async (c) => {
-  const sessionId = getCookie(c, 'session_id');
-  if (sessionId) {
-    await c.env.SESSION_KV.delete(sessionId);
+  if (c.env.SESSION_KV) {
+    const sessionId = getCookie(c, 'session_id');
+    if (sessionId) {
+      await c.env.SESSION_KV.delete(sessionId);
+    }
+  } else {
+    console.error('Server not configured: Missing SESSION_KV binding. Cannot delete session from KV.');
   }
   deleteCookie(c, 'session_id', { path: '/', secure: true, httpOnly: true, sameSite: 'None' });
   return c.json({ success: true });
 });
 
 app.get('/api/session', async (c) => {
+  if (!c.env.SESSION_KV) {
+    console.error('Server not configured: Missing SESSION_KV binding.');
+    return c.json({ error: 'Server session storage not configured.' }, 503);
+  }
   const sessionId = getCookie(c, 'session_id');
   if (sessionId) {
     const userRole = await c.env.SESSION_KV.get(sessionId);
@@ -96,17 +109,27 @@ app.get('/api/session', async (c) => {
 // --- Chat Route ---
 
 app.post('/api/chat', async (c) => {
-  // Fix: Cast the JSON body to the expected type.
-  const { history, newUserMessage } = await c.req.json() as { history: Message[], newUserMessage: Message };
-  const sessionId = getCookie(c, 'session_id');
-  const userRole = sessionId ? await c.env.SESSION_KV.get(sessionId) : null;
-  const isAdmin = userRole === 'admin';
+  if (!c.env.GEMINI_API_KEY) {
+      console.error('Server not configured: Missing GEMINI_API_KEY.');
+      return c.json({ text: "Server is not configured correctly. The Gemini API key is missing." }, 503);
+  }
 
   try {
+    const body = await c.req.json();
+    const history = body.history as Message[];
+    const newUserMessage = body.newUserMessage as Message;
+
+    if (!Array.isArray(history) || !newUserMessage || typeof newUserMessage.text !== 'string') {
+        return c.json({ text: "Invalid request format." }, 400);
+    }
+  
+    const sessionId = getCookie(c, 'session_id');
+    const userRole = sessionId && c.env.SESSION_KV ? await c.env.SESSION_KV.get(sessionId) : null;
+    const isAdmin = userRole === 'admin';
+
     const ai = new GoogleGenAI({ apiKey: c.env.GEMINI_API_KEY });
     const model = 'gemini-2.5-flash';
 
-    // Safely construct the config object
     const config: {
         systemInstruction: string;
         tools?: { functionDeclarations: FunctionDeclaration[] }[];
@@ -120,7 +143,7 @@ app.post('/api/chat', async (c) => {
 
     const chat: Chat = ai.chats.create({
         model,
-        config, // Use the safely constructed config
+        config,
         history: history.map(msg => ({
             role: msg.role,
             parts: [{ text: msg.text }],
@@ -129,15 +152,13 @@ app.post('/api/chat', async (c) => {
 
     let response: GenerateContentResponse = await chat.sendMessage({ message: newUserMessage.text });
 
-    // Handle function calls if they exist
     const functionCalls = response.functionCalls;
     if (functionCalls && functionCalls.length > 0) {
-        const call = functionCalls[0]; // Process one function call at a time for simplicity
+        const call = functionCalls[0];
         let functionResult;
 
         console.log("Executing function call:", call.name, call.args);
 
-        // Fix: Cast call.args to 'any' to match function signatures. The model guarantees the shape.
         if (call.name === 'create_invoice') {
             functionResult = await createInvoice(c, call.args as any);
         } else if (call.name === 'manage_inventory') {
@@ -161,9 +182,13 @@ app.post('/api/chat', async (c) => {
 
     return c.json({ text: response.text });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error processing chat:", error);
-    return c.json({ text: "Sorry, an error occurred on the server." }, 500);
+    // Check for specific Gemini API errors if possible, otherwise send a generic one.
+    const errorMessage = error.message?.includes('API key not valid') 
+      ? "The configured Gemini API key is invalid. Please check the server configuration."
+      : "Sorry, an error occurred while communicating with the AI. Please try again later.";
+    return c.json({ text: errorMessage }, 500);
   }
 });
 
@@ -249,24 +274,36 @@ const sendTelegramReportTool: FunctionDeclaration = {
 // --- Tool Implementation ---
 
 // Google Sheets Helper
-async function getGoogleAuthToken(c: any): Promise<string> {
-  const serviceAccount = JSON.parse(c.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  const auth = new GoogleAuth({
-    credentials: {
-      client_email: serviceAccount.client_email,
-      private_key: serviceAccount.private_key,
-    },
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  const authToken = await auth.getAccessToken();
-  if (!authToken) throw new Error('Failed to authenticate with Google');
-  return authToken;
+async function getGoogleAuthToken(c: any): Promise<string | null> {
+  if (!c.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    console.error('Missing binding: GOOGLE_SERVICE_ACCOUNT_JSON');
+    return null;
+  }
+  try {
+    const serviceAccount = JSON.parse(c.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    const auth = new GoogleAuth({
+      credentials: {
+        client_email: serviceAccount.client_email,
+        private_key: serviceAccount.private_key,
+      },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const authToken = await auth.getAccessToken();
+    if (!authToken) throw new Error('Failed to authenticate with Google');
+    return authToken;
+  } catch(e) {
+    console.error('Error parsing GOOGLE_SERVICE_ACCOUNT_JSON or getting auth token', e);
+    return null;
+  }
 }
 
 // Invoice creation function
 async function createInvoice(c: any, { customerName, items, totalAmount }: { customerName: string; items: string[]; totalAmount: number; }) {
+  if (!c.env.SPREADSHEET_ID) return { success: false, error: 'Server configuration error: SPREADSHEET_ID is not set.'};
   try {
     const authToken = await getGoogleAuthToken(c);
+    if (!authToken) return { success: false, error: 'Server configuration error: Could not authenticate with Google Sheets.' };
+
     const sheetName = 'Invoices';
     const values = [[new Date().toISOString(), customerName, items.join(', '), totalAmount]];
     
@@ -291,17 +328,16 @@ async function createInvoice(c: any, { customerName, items, totalAmount }: { cus
   }
 }
 
-// Inventory management function (simplified: finds and updates a row)
+// Inventory management function
 async function manageInventory(c: any, { itemName, quantityChange }: { itemName: string; quantityChange: number; }) {
-  // This is a simplified implementation. A real app would need more robust logic 
-  // to find the correct row and handle cases where the item doesn't exist.
-  // For this example, we assume item names are in column A and quantities in column B.
+  if (!c.env.SPREADSHEET_ID) return { success: false, error: 'Server configuration error: SPREADSHEET_ID is not set.'};
   try {
     const authToken = await getGoogleAuthToken(c);
+    if (!authToken) return { success: false, error: 'Server configuration error: Could not authenticate with Google Sheets.' };
+
     const sheetName = 'Inventory';
     const range = `${sheetName}!A:B`;
 
-    // 1. Get current inventory data
     const getResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${c.env.SPREADSHEET_ID}/values/${range}`, {
         headers: { 'Authorization': `Bearer ${authToken}` },
     });
@@ -318,7 +354,6 @@ async function manageInventory(c: any, { itemName, quantityChange }: { itemName:
     const currentQuantity = parseInt(rows[itemRowIndex][1] || '0', 10);
     const newQuantity = currentQuantity + quantityChange;
 
-    // 2. Update the specific cell
     const updateRange = `${sheetName}!B${itemRowIndex + 1}`;
     const updateResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${c.env.SPREADSHEET_ID}/values/${updateRange}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
@@ -343,6 +378,9 @@ async function manageInventory(c: any, { itemName, quantityChange }: { itemName:
 
 // Telegram reporting function
 async function sendTelegramReport(c: any, { reportContent }: { reportContent: string; }) {
+  if (!c.env.TELEGRAM_BOT_TOKEN || !c.env.TELEGRAM_CHAT_ID) {
+    return { success: false, error: 'Server configuration error: Telegram bot token or chat ID is not set.' };
+  }
   try {
     const url = `https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
     const response = await fetch(url, {
