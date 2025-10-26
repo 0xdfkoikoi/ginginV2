@@ -1,66 +1,63 @@
-import type { Message } from '../types.ts';
+import { Message } from '../types';
 
-const WORKER_URL = 'https://ginginv2.realganganadul.workers.dev';
+const API_BASE_URL = 'https://ginginv2.realganganadul.workers.dev';
 
-export const api = {
-  login: async (username, password): Promise<{ success: boolean; error?: string }> => {
-    try {
-      const response = await fetch(`${WORKER_URL}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-        credentials: 'include',
-      });
-      if (response.ok) return { success: true };
-      const errorData = await response.json().catch(() => ({ error: 'Login failed due to a network or server issue.' }));
-      return { success: false, error: errorData.error || 'Invalid credentials or unknown error.' };
-    } catch (error) {
-      console.error("Login API call failed:", error);
-      return { success: false, error: 'Could not connect to the server.' };
+export interface LoginResponse {
+  success: boolean;
+  token?: string;
+  error?: string;
+}
+
+/**
+ * Sends login credentials to the backend worker.
+ */
+export const login = async (username?: string, password?: string): Promise<LoginResponse> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username, password }),
+    });
+    
+    const data: LoginResponse = await response.json();
+
+    if (!response.ok) {
+        return { success: false, error: data.error || 'Login failed.' };
     }
-  },
 
-  logout: async () => {
-    try {
-      await fetch(`${WORKER_URL}/api/logout`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-    } catch (error) {
-        console.error("Logout API call failed:", error);
+    return data;
+  } catch (error) {
+    console.error("Login API error:", error);
+    return { success: false, error: 'Could not connect to the server.' };
+  }
+};
+
+/**
+ * Sends the chat history to the backend worker to get an AI response.
+ */
+export const sendMessage = async (history: Message[], token: string | null): Promise<string> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // Include the auth token if the user is logged in
+        'Authorization': `Bearer ${token || ''}`,
+      },
+      body: JSON.stringify({ history }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Network response was not ok');
     }
-  },
 
-  checkSession: async (): Promise<{ isLoggedIn: boolean }> => {
-    try {
-      const response = await fetch(`${WORKER_URL}/api/session`, {
-        credentials: 'include',
-      });
-      if (!response.ok) return { isLoggedIn: false };
-      return response.json();
-    } catch (error) {
-      console.error("Failed to check session:", error);
-      return { isLoggedIn: false };
-    }
-  },
-
-  getChatResponse: async (history: Message[], newUserMessage: Message): Promise<string> => {
-    try {
-      const response = await fetch(`${WORKER_URL}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ history, newUserMessage }),
-        credentials: 'include',
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.text || `API error: ${response.statusText}`);
-      }
-      return data.text;
-    } catch (error) {
-      console.error("Failed to get chat response:", error);
-      throw new Error((error as Error).message || "I'm sorry, but I encountered an error while processing your request. Please try again.");
-    }
-  },
+    const data = await response.json();
+    return data.reply;
+  } catch (error) {
+    console.error("Error sending message:", error);
+    return "Sorry, I'm having trouble connecting to my brain right now. Please try again later.";
+  }
 };
