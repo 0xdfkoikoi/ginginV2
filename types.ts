@@ -1,5 +1,6 @@
 
 export interface Message {
-  role: 'user' | 'model';
+  id: number;
   text: string;
+  sender: 'user' | 'ai';
 }
