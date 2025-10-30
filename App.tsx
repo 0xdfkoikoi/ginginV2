@@ -1,126 +1,191 @@
-import React, { useState, useCallback } from 'react';
-import { ChatBox } from './components/ChatBox';
-import { LoginModal } from './components/LoginModal';
-import { AdminIcon } from './components/icons/AdminIcon';
-import { Message } from './types';
-import { login, sendMessage } from './services/api';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { ChatMessage } from './types';
+import { sendMessageToAI, updateSystemInstruction } from './services/geminiService';
+import { reportInquiry } from './services/telegramService';
+import { getSessionId } from './services/sessionService';
+import { getChatHistory, saveChatHistory } from './services/historyService';
+import ChatInput from './components/ItineraryForm';
+import ChatHistory from './components/ItineraryDisplay';
+import ErrorDisplay from './components/ErrorDisplay';
+import LoginModal from './components/LoginModal';
+import AdminPanel from './components/AdminPanel';
+import { CoffeeIcon, LogInIcon, LogOutIcon, SheetIcon } from './components/icons';
 
 const App: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 1, text: "Welcome to Mantik! I am your AI assistant for our coffee export business. How can I assist you today?", sender: 'ai' }
-  ]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isLoginModalOpen, setLoginModalOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authToken, setAuthToken] = useState<string | null>(null);
+    const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [error, setError] = useState<string | null>(null);
+    const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+    const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+    const [isAdminPanelOpen, setIsAdminPanelOpen] = useState<boolean>(false);
+    const sessionIdRef = useRef<string | null>(null);
 
-  const handleSendMessage = useCallback(async (newMessageText: string) => {
-    if (!newMessageText.trim()) return;
+    useEffect(() => {
+        if (localStorage.getItem('isLoggedIn') === 'true') {
+            setIsLoggedIn(true);
+        }
+        if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
+            console.warn("Admin credentials (ADMIN_USERNAME, ADMIN_PASSWORD) are not set. Login will not work.");
+        }
+        sessionIdRef.current = getSessionId();
+    }, []);
 
-    const userMessage: Message = {
-      id: Date.now(),
-      text: newMessageText,
-      sender: 'user',
+    const initializeChat = useCallback(async () => {
+        setIsLoading(true);
+        setError(null);
+        if (!sessionIdRef.current) {
+            sessionIdRef.current = getSessionId();
+        }
+
+        try {
+            let history = await getChatHistory(sessionIdRef.current);
+            if (history.length === 0) {
+                // Brand new session, get welcome message
+                const result = await sendMessageToAI([], "Hello");
+                const welcomeMessage: ChatMessage = { role: 'model', content: result };
+                history = [welcomeMessage];
+                // Save the initial greeting to the history
+                await saveChatHistory(sessionIdRef.current, history);
+            }
+            setMessages(history);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An unexpected error occurred while starting the chat.');
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+    
+    useEffect(() => {
+        initializeChat();
+    }, [initializeChat]);
+
+
+    const handleSendMessage = useCallback(async (message: string) => {
+        if (!message || !sessionIdRef.current) return;
+
+        const userMessage: ChatMessage = { role: 'user', content: message };
+        const currentMessages = [...messages, userMessage];
+        setMessages(currentMessages);
+        setIsLoading(true);
+        setError(null);
+
+        try {
+            // Pass the up-to-date history to the AI service
+            const result = await sendMessageToAI(currentMessages, message);
+            const modelMessage: ChatMessage = { role: 'model', content: result };
+            
+            // Use functional update to get the latest state
+            setMessages(prev => {
+                const updatedHistory = [...prev, modelMessage];
+                // Save the full conversation history
+                saveChatHistory(sessionIdRef.current!, updatedHistory).catch(console.error);
+                return updatedHistory;
+            });
+
+            // Silently report the inquiry to Telegram
+            reportInquiry(userMessage.content, modelMessage.content).catch(reportError => {
+                console.error("Failed to report inquiry to Telegram:", reportError);
+            });
+
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [messages]);
+    
+    const handleLogin = (username?: string, password?: string): boolean => {
+        const adminUser = process.env.ADMIN_USERNAME;
+        const adminPass = process.env.ADMIN_PASSWORD;
+
+        if (!adminUser || !adminPass) {
+             console.error("Admin credentials are not configured.");
+             return false;
+        }
+
+        if (username === adminUser && password === adminPass) {
+            setIsLoggedIn(true);
+            localStorage.setItem('isLoggedIn', 'true');
+            setIsLoginModalOpen(false);
+            return true;
+        }
+        return false;
     };
 
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
-    setIsLoading(true);
-
-    try {
-      const aiResponseText = await sendMessage(updatedMessages, authToken);
-      const aiMessage: Message = {
-        id: Date.now() + 1,
-        text: aiResponseText,
-        sender: 'ai',
-      };
-      setMessages(prevMessages => [...prevMessages, aiMessage]);
-    } catch (error) {
-      const errorMessage: Message = {
-        id: Date.now() + 1,
-        text: "Sorry, something went wrong. Please try again.",
-        sender: 'ai',
-      };
-      setMessages(prevMessages => [...prevMessages, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [messages, authToken]);
-
-  const handleLogin = useCallback(async (username?: string, password?: string) => {
-    const response = await login(username, password);
-    if (response.success && response.token) {
-      setIsLoggedIn(true);
-      setAuthToken(response.token);
-      setLoginModalOpen(false);
-      
-      const loginSuccessMessage: Message = {
-        id: Date.now(),
-        text: "Admin login successful. You now have access to privileged commands.",
-        sender: 'ai',
-      };
-      setMessages(prev => [...prev, loginSuccessMessage]);
-      return { success: true };
-    } else {
-      return { success: false, error: response.error };
-    }
-  }, []);
-
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    setAuthToken(null);
-     const logoutMessage: Message = {
-        id: Date.now(),
-        text: "You have been logged out.",
-        sender: 'ai',
-      };
-    setMessages(prev => [...prev, logoutMessage]);
-  }
+    const handleLogout = () => {
+        setIsLoggedIn(false);
+        localStorage.removeItem('isLoggedIn');
+    };
 
 
-  return (
-    <div className="relative h-screen w-screen bg-stone-900 overflow-hidden">
-      {/* Background with gradient overlay */}
-      <img src="https://images.unsplash.com/photo-1559925393-8be0ec4767c8?q=80&w=1974&auto=format&fit=crop" alt="Coffee beans background" className="absolute inset-0 w-full h-full object-cover opacity-60"/>
-      <div className="absolute inset-0 bg-gradient-to-br from-stone-900/80 via-amber-900/40 to-stone-900/80"></div>
-      
-      <div className="relative z-10 flex flex-col items-center justify-center h-full p-4">
-        <header className="absolute top-0 left-0 right-0 p-4 flex justify-between items-center w-full">
-            <h1 className="text-2xl font-bold text-stone-200/90 tracking-wider">Mantik AI</h1>
-            {isLoggedIn ? (
-                 <button 
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600/60 hover:bg-red-600/80 backdrop-blur-sm border border-red-500/30 rounded-lg transition-all"
-                >
-                    <AdminIcon className="h-5 w-5" />
-                    <span>Logout</span>
-                </button>
-            ) : (
-                <button 
-                    onClick={() => setLoginModalOpen(true)}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-stone-200 bg-stone-100/10 hover:bg-stone-100/20 backdrop-blur-sm border border-white/20 rounded-lg transition-all"
-                >
-                    <AdminIcon className="h-5 w-5" />
-                    <span>Admin Login</span>
-                </button>
-            )}
-        </header>
+    return (
+        <div className="h-screen w-screen flex flex-col font-sans text-white">
+            <header className="flex-shrink-0 z-10 bg-black/30 backdrop-blur-lg border-b border-white/20">
+                <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                         <CoffeeIcon className="h-8 w-8 text-brand-light" />
+                        <h1 className="text-xl sm:text-2xl font-bold text-white">
+                            Mantik Coffee Assistant
+                        </h1>
+                    </div>
+                     <div className="flex items-center space-x-2">
+                        {isLoggedIn ? (
+                            <>
+                                <button
+                                    onClick={() => setIsAdminPanelOpen(true)}
+                                    className="flex items-center px-3 py-2 text-sm font-medium text-gray-200 hover:bg-white/20 rounded-md transition-colors"
+                                >
+                                    <SheetIcon className="h-4 w-4 mr-2" />
+                                    Admin Panel
+                                </button>
+                                <button
+                                    onClick={handleLogout}
+                                    className="flex items-center px-3 py-2 text-sm font-medium text-gray-200 hover:bg-white/20 rounded-md transition-colors"
+                                >
+                                    <LogOutIcon className="h-4 w-4 mr-2" />
+                                    Log Out
+                                </button>
+                            </>
+                        ) : (
+                            <button
+                                onClick={() => setIsLoginModalOpen(true)}
+                                className="flex items-center px-3 py-2 text-sm font-medium text-gray-200 hover:bg-white/20 rounded-md transition-colors"
+                            >
+                                <LogInIcon className="h-4 w-4 mr-2" />
+                                Admin Log In
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </header>
 
-        <ChatBox 
-          messages={messages} 
-          onSendMessage={handleSendMessage} 
-          isLoading={isLoading} 
-        />
-      </div>
-
-      {isLoginModalOpen && (
-        <LoginModal 
-          onClose={() => setLoginModalOpen(false)}
-          onLogin={handleLogin}
-        />
-      )}
-    </div>
-  );
+            <main className="flex-1 flex flex-col container mx-auto w-full max-w-3xl min-h-0 py-4">
+                 <div className="flex-1 flex flex-col bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
+                    {error ? (
+                        <div className="flex-1 flex items-center justify-center p-4">
+                            <ErrorDisplay message={error} onRetry={initializeChat} />
+                        </div>
+                    ) : (
+                        <ChatHistory messages={messages} isLoading={isLoading} />
+                    )}
+                    <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+                 </div>
+            </main>
+            <LoginModal 
+                isOpen={isLoginModalOpen}
+                onClose={() => setIsLoginModalOpen(false)}
+                onLogin={handleLogin}
+            />
+            <AdminPanel
+                isOpen={isAdminPanelOpen}
+                onClose={() => setIsAdminPanelOpen(false)}
+                onUpdateSuccess={() => {
+                    setIsAdminPanelOpen(false);
+                    // No need to re-initialize chat. The new system prompt will be used on the next message.
+                }}
+            />
+        </div>
+    );
 };
 
 export default App;
